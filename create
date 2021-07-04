@@ -1,0 +1,61 @@
+#!/bin/bash
+
+WIFACE=wlp3s0  # Interface 
+BFACE=br0      # Virtual Bridge
+USER=xnu       # User ownership for the created TAP interfaces
+GROUP=xnu      # Group ownership for the created TAP interfaces
+TLIMIT=5       # Maximum number of TAP interfaces that can be created
+
+if [[ -z $1 ]]
+then
+	echo "Number of TAP interfaces to be created is not specified...exiting"
+	exit 1
+fi
+
+if [[ $1 -gt $TLIMIT ]]
+then
+	echo "Currently, creating more than 5 TAP interfaces is unsupported...exiting"
+	exit 1
+fi
+
+if [[ -z $WIFACE || -z $BFACE || -z $USER || -z $GROUP || -z $TLIMIT ]]
+then
+	echo "Some variable(s) are unset... exiting"
+	exit 1
+fi
+
+if [[ $(ip tuntap list) ]]
+then
+	echo "Some TAP interfaces are already created"
+	echo "This script could potentially affect existing TAP interfaces...exiting"
+	exit 1
+fi
+
+echo "Setting net.ipv4.ip_forward..."
+sysctl net.ipv4.ip_forward=1
+
+# Setup bridge
+
+echo "Setting up bridge..."
+ip link add name $BFACE type bridge
+ip link set dev $BFACE addr 14:1f:ba:18:28:1f
+ip addr add 172.16.0.1/24 dev $BFACE
+ip link set dev $BFACE up
+
+# Create TAP interface
+
+echo "Setting up TAP interfaces..."
+for ((i=1 ; i<=$1 ; i++))
+do
+	ip tuntap add dev tap$[i-1] mode tap user $USER group $GROUP
+	ip link set dev tap$[i-1] master br0
+	ip link set dev tap$[i-1] addr 14:1f:ba:18:28:$[i+3]f
+	ip link set dev tap$[i-1] up
+done
+
+# iptables rules
+echo "Adding iptables rule..."
+iptables -t nat -A POSTROUTING -o $WIFACE -j MASQUERADE
+
+#iptables -A FORWARD -i $BFACE -o $WIFACE -j ACCEPT
+# iptables -A FORWARD -i $WIFACE -o $BFACE -m state --state RELATED,ESTABLISHED -j ACCEPT
